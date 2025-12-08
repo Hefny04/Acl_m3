@@ -16,7 +16,7 @@ AUTH = ("neo4j", "gJLmWmdcogS5Fh1G1OuQaqIzz6PiehlnoXv8RCSxx6s")
 
 # 2. SETUP CUSTOM LLM WRAPPER
 if "HUGGINGFACEHUB_API_TOKEN" not in os.environ:
-    os.environ["HUGGINGFACEHUB_API_TOKEN"] = "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"
+    os.environ["HUGGINGFACEHUB_API_TOKEN"] = "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"
 
 class FreeHFChatLLM(LLM):
     repo_id: str = "google/gemma-2-2b-it"
