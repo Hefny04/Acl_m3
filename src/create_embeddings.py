@@ -1,27 +1,40 @@
+"""Utility to generate player profile embeddings for Neo4j vector search.
+
+This script fetches aggregated season stats for each player, builds a concise
+natural-language profile string, embeds it with a Hugging Face model, and stores
+it in a Neo4j vector index for similarity search.
+"""
+
 import os
-from neo4j import GraphDatabase
+from typing import List, Tuple
+
 from langchain_community.vectorstores import Neo4jVector
 from langchain_huggingface import HuggingFaceEmbeddings
+from neo4j import GraphDatabase
+
+from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
 # --- CONFIGURATION ---
-URI = "neo4j+s://1cc4cb6e.databases.neo4j.io"
-AUTH = ("neo4j", "gJLmWmdcogS5Fh1G1OuQaqIzz6PiehlnoXv8RCSxx6s")
+# Default Hugging Face token supplied by the user; environment override allowed.
+HF_TOKEN = "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"
+if "HUGGINGFACEHUB_API_TOKEN" not in os.environ:
+    os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
 
-# Using a standard, free embedding model from Hugging Face
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+# Free, high-quality embedding model available on Hugging Face.
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+INDEX_NAME = "player_profile_index"
+NODE_LABEL = "PlayerProfile"
 
-def create_player_embeddings():
-    print("--- 1. Connecting to Neo4j ---")
-    driver = GraphDatabase.driver(URI, auth=AUTH)
-    
-    # Query to fetch aggregated player data for the text chunk
-    # We construct a natural language string for the embedding
+
+def fetch_player_profiles(driver) -> List[Tuple[str, str]]:
+    """Return (id, profile_text) pairs describing each player."""
+
     fetch_query = """
     MATCH (p:Player)-[r:PLAYED_IN]->(f:Fixture {season: '2022-23'})
     MATCH (p)-[:PLAYS_AS]->(pos:Position)
-    
+
     // Aggregate stats per player for the season
-    WITH p, pos, 
+    WITH p, pos,
          sum(r.total_points) as total_points,
          sum(r.goals_scored) as goals,
          sum(r.assists) as assists,
@@ -29,53 +42,54 @@ def create_player_embeddings():
          count(f) as appearances
 
     // Construct the text to embed
-    WITH p, 
-         "Player: " + p.player_name + 
-         ". Position: " + pos.name + 
-         ". Season 2022-23 Stats: " + 
-         "Total Points: " + toString(total_points) + 
-         ", Goals: " + toString(goals) + 
-         ", Assists: " + toString(assists) + 
-         ", Appearances: " + toString(appearances) + 
+    WITH p,
+         "Player: " + p.player_name +
+         ". Position: " + pos.name +
+         ". Season 2022-23 Stats: " +
+         "Total Points: " + toString(total_points) +
+         ", Goals: " + toString(goals) +
+         ", Assists: " + toString(assists) +
+         ", Appearances: " + toString(appearances) +
          ", Influence: " + toString(toInteger(influence)) AS text_description
-    
+
     RETURN p.player_name AS id, text_description AS text
     """
-    
-    print("--- 2. Fetching Player Data & Constructing Text ---")
-    data = []
-    with driver.session() as session:
-        result = session.run(fetch_query)
-        for record in result:
-            data.append({"id": record["id"], "text": record["text"]})
-    
-    driver.close()
-    print(f"Prepared {len(data)} player profiles for embedding.")
 
-    # --- 3. Create Vector Index using LangChain ---
+    profiles: List[Tuple[str, str]] = []
+    with driver.session() as session:
+        for record in session.run(fetch_query):
+            profiles.append((record["id"], record["text"]))
+    return profiles
+
+
+def create_player_embeddings():
+    """Create/update the Neo4j vector index populated with player profiles."""
+
+    print("--- 1. Connecting to Neo4j ---")
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+
+    print("--- 2. Fetching Player Data & Constructing Text ---")
+    player_profiles = fetch_player_profiles(driver)
+    print(f"Prepared {len(player_profiles)} player profiles for embedding.")
+
     print(f"--- 3. Generating Embeddings ({EMBEDDING_MODEL}) & Indexing ---")
-    
-    # This automatically:
-    # 1. Embeds the 'text' using the HF model
-    # 2. Stores it in a new node property 'embedding'
-    # 3. Creates a Vector Index named 'player_profile_index'
-    
     try:
-        vector_store = Neo4jVector.from_texts(
-            texts=[d["text"] for d in data],
-            metadatas=[{"player_name": d["id"]} for d in data], # Metadata helps retrieval
+        Neo4jVector.from_texts(
+            texts=[profile for _, profile in player_profiles],
+            metadatas=[{"player_name": player} for player, _ in player_profiles],
             embedding=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL),
-            url=URI,
-            username=AUTH[0],
-            password=AUTH[1],
-            index_name="player_profile_index",
-            node_label="PlayerProfile",  # We create specific nodes for vector search
+            url=NEO4J_URI,
+            username=NEO4J_USER,
+            password=NEO4J_PASSWORD,
+            index_name=INDEX_NAME,
+            node_label=NODE_LABEL,
             text_node_property="text",
-            embedding_node_property="embedding"
+            embedding_node_property="embedding",
         )
-        print("Success! Vector Index 'player_profile_index' created.")
-    except Exception as e:
-        print(f"Error creating vector index: {e}")
+        print(f"Success! Vector Index '{INDEX_NAME}' created or updated.")
+    finally:
+        driver.close()
+
 
 if __name__ == "__main__":
     create_player_embeddings()
