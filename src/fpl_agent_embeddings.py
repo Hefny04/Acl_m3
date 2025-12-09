@@ -77,9 +77,15 @@ def rerank_by_player_name(question: str, docs: List) -> List:
 
 
 def semantic_search(question: str, k: int = 5):
+    """Return ranked embedding matches with both text and metadata."""
+
     store = load_vector_store()
     docs = store.similarity_search(question, k=k)
-    return rerank_by_player_name(question, docs)
+    ranked = rerank_by_player_name(question, docs)
+    return [
+        {"text": doc.page_content, "metadata": doc.metadata}
+        for doc in ranked
+    ]
 
 
 def build_prompt(question: str, docs) -> str:
@@ -92,7 +98,7 @@ def build_prompt(question: str, docs) -> str:
     context_lines = []
     for doc in docs:
         context_lines.append(
-            f"Player: {doc.metadata.get('player_name', 'Unknown')}. Profile: {doc.page_content}"
+            f"Player: {doc['metadata'].get('player_name', 'Unknown')}. Profile: {doc['text']}"
         )
     context = "\n".join(context_lines)
     template = PromptTemplate(

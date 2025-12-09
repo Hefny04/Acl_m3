@@ -1,7 +1,7 @@
 import os
 import json
 import re
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 # --- IMPORTS ---
 from langchain_core.prompts import PromptTemplate
@@ -253,6 +253,27 @@ def normalize_params(params):
     
     return cleaned
 
+
+def run_cypher(intent: str, params: Optional[Dict[str, Any]] = None):
+    """Run a Cypher template with normalized parameters and return raw records.
+
+    This helper centralizes parameter cleaning and database execution so other
+    modules can reuse the Graph access logic without going through the CLI
+    loop.
+    """
+
+    if intent:
+        intent = intent.strip().lower()
+
+    params = normalize_params(params)
+
+    if intent not in CYPHER_TEMPLATES:
+        raise ValueError(f"Intent '{intent}' is not in the template library.")
+
+    with GraphDatabase.driver(URI, auth=AUTH) as driver:
+        result = driver.execute_query(CYPHER_TEMPLATES[intent], params)
+        return [record.data() for record in result.records]
+
 def parse_user_intent(user_query):
     parser = JsonOutputParser()
     prompt = PromptTemplate(
@@ -307,31 +328,20 @@ def parse_user_intent(user_query):
 # --- EXECUTION ENGINE ---
 def execute_query(intent_data):
     intent = intent_data.get("intent")
-    if intent: intent = intent.strip().lower()
-    
-    raw_params = intent_data.get("parameters")
-    params = normalize_params(raw_params)
-    
-    print(f"[DEBUG] Intent: '{intent}' | Normalized Params: {params}")
+    params = intent_data.get("parameters")
 
-    if intent not in CYPHER_TEMPLATES:
-        return f"Error: Intent '{intent}' is not in the template library."
-    
     try:
-        with GraphDatabase.driver(URI, auth=AUTH) as driver:
-            result = driver.execute_query(CYPHER_TEMPLATES[intent], params)
-            records = result.records
-            
-            if not records: 
-                return "No data found. (Check if Season/Names are correct or if data exists for this year)"
-            
-            output = []
-            for r in records:
-                output.append(json.dumps(r.data()))
-            return "\n".join(output)
-            
+        records = run_cypher(intent, params)
     except Exception as e:
         return f"Query Execution Error: {e}"
+
+    print(f"[DEBUG] Intent: '{intent}' | Normalized Params: {normalize_params(params)}")
+
+    if not records:
+        return "No data found. (Check if Season/Names are correct or if data exists for this year)"
+
+    output = [json.dumps(record) for record in records]
+    return "\n".join(output)
 
 if __name__ == "__main__":
     print("--- FPL Graph-RAG Baseline Assistant (Robust V3) ---")
