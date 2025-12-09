@@ -13,11 +13,10 @@ from langchain_community.vectorstores import Neo4jVector
 from langchain_core.language_models.llms import LLM
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.prompts import PromptTemplate
-from langchain_core.runnables import RunnableLambda
 
 from config import NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
 
-HF_TOKEN = "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"
+HF_TOKEN = "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"
 if "HUGGINGFACEHUB_API_TOKEN" not in os.environ:
     os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
 
@@ -81,7 +80,7 @@ def build_prompt(question: str, docs) -> str:
         ),
         input_variables=["context", "question"],
     )
-    chain = template | RunnableLambda(lambda data: llm.invoke(template.format(**data)))
+    chain = template | llm
     return chain.invoke({"context": context, "question": question})
 
 
