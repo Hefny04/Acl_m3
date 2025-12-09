@@ -6,6 +6,7 @@ retrieved context.
 """
 
 import os
+import difflib
 from typing import Any, List, Optional
 
 from huggingface_hub import InferenceClient
@@ -61,15 +62,43 @@ def load_vector_store() -> Neo4jVector:
     return vector_store
 
 
+def rerank_by_player_name(question: str, docs: List) -> List:
+    """Prioritize documents whose player name best matches the question."""
+
+    def score(doc) -> float:
+        name = doc.metadata.get("player_name", "").lower()
+        if not name:
+            return 0.0
+        # SequenceMatcher gives a 0-1 score; higher is better.
+        return difflib.SequenceMatcher(a=question.lower(), b=name).ratio()
+
+    return sorted(docs, key=score, reverse=True)
+
+
 def semantic_search(question: str, k: int = 5):
+    """Return ranked embedding matches with both text and metadata."""
+
     store = load_vector_store()
-    return store.similarity_search(question, k=k)
+    docs = store.similarity_search(question, k=k)
+    ranked = rerank_by_player_name(question, docs)
+    return [
+        {"text": doc.page_content, "metadata": doc.metadata}
+        for doc in ranked
+    ]
 
 
 def build_prompt(question: str, docs) -> str:
+    if not docs:
+        return (
+            "No relevant player profiles were found for that question. "
+            "Try rephrasing with the exact player name or regenerate embeddings for the season you want."
+        )
+
     context_lines = []
     for doc in docs:
-        context_lines.append(f"Player: {doc.metadata.get('player_name', 'Unknown')}. Profile: {doc.page_content}")
+        context_lines.append(
+            f"Player: {doc['metadata'].get('player_name', 'Unknown')}. Profile: {doc['text']}"
+        )
     context = "\n".join(context_lines)
     template = PromptTemplate(
         template=(
